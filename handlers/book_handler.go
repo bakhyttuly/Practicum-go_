@@ -2,20 +2,17 @@ package handlers
 
 import (
 	"bookstore/models"
-	"encoding/json"
 	"net/http"
 	"sort"
 	"strconv"
 
-	"github.com/gorilla/mux"
+	"github.com/gin-gonic/gin"
 )
 
 var books = make(map[int]models.Book)
 var nextBookID = 1
 
-func GetBooks(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
+func GetBooks(c *gin.Context) {
 	var booksList []models.Book
 	for _, book := range books {
 		booksList = append(booksList, book)
@@ -28,13 +25,13 @@ func GetBooks(w http.ResponseWriter, r *http.Request) {
 	page := 1
 	limit := 10
 
-	pageStr := r.URL.Query().Get("page")
-	limitStr := r.URL.Query().Get("limit")
+	pageStr := c.Query("page")
+	limitStr := c.Query("limit")
 
 	if pageStr != "" {
 		p, err := strconv.Atoi(pageStr)
 		if err != nil || p < 1 {
-			http.Error(w, "invalid page", http.StatusBadRequest)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid page"})
 			return
 		}
 		page = p
@@ -43,7 +40,7 @@ func GetBooks(w http.ResponseWriter, r *http.Request) {
 	if limitStr != "" {
 		l, err := strconv.Atoi(limitStr)
 		if err != nil || l < 1 {
-			http.Error(w, "invalid limit", http.StatusBadRequest)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid limit"})
 			return
 		}
 		limit = l
@@ -53,7 +50,7 @@ func GetBooks(w http.ResponseWriter, r *http.Request) {
 	end := start + limit
 
 	if start >= len(booksList) {
-		json.NewEncoder(w).Encode([]models.Book{})
+		c.JSON(http.StatusOK, []models.Book{})
 		return
 	}
 
@@ -61,51 +58,47 @@ func GetBooks(w http.ResponseWriter, r *http.Request) {
 		end = len(booksList)
 	}
 
-	json.NewEncoder(w).Encode(booksList[start:end])
+	c.JSON(http.StatusOK, booksList[start:end])
 }
 
-func GetBookByID(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	params := mux.Vars(r)
-	id, err := strconv.Atoi(params["id"])
+func GetBookByID(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		http.Error(w, "invalid book ID", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid book ID"})
 		return
 	}
 
 	book, exists := books[id]
 	if !exists {
-		http.Error(w, "book not found", http.StatusNotFound)
+		c.JSON(http.StatusNotFound, gin.H{"error": "book not found"})
 		return
 	}
 
-	json.NewEncoder(w).Encode(book)
+	c.JSON(http.StatusOK, book)
 }
 
-func AddBook(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
+func AddBook(c *gin.Context) {
 	var book models.Book
-	if err := json.NewDecoder(r.Body).Decode(&book); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+
+	if err := c.ShouldBindJSON(&book); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	if book.Title == "" {
-		http.Error(w, "title is required", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "title is required"})
 		return
 	}
 	if book.AuthorID <= 0 {
-		http.Error(w, "author_id is required", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "author_id is required"})
 		return
 	}
 	if book.CategoryID <= 0 {
-		http.Error(w, "category_id is required", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "category_id is required"})
 		return
 	}
 	if book.Price <= 0 {
-		http.Error(w, "price must be greater than 0", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "price must be greater than 0"})
 		return
 	}
 
@@ -113,69 +106,64 @@ func AddBook(w http.ResponseWriter, r *http.Request) {
 	nextBookID++
 	books[book.ID] = book
 
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(book)
+	c.JSON(http.StatusCreated, book)
 }
 
-func UpdateBook(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	params := mux.Vars(r)
-	id, err := strconv.Atoi(params["id"])
+func UpdateBook(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		http.Error(w, "invalid book ID", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid book ID"})
 		return
 	}
 
 	_, exists := books[id]
 	if !exists {
-		http.Error(w, "book not found", http.StatusNotFound)
+		c.JSON(http.StatusNotFound, gin.H{"error": "book not found"})
 		return
 	}
 
 	var updatedBook models.Book
-	if err := json.NewDecoder(r.Body).Decode(&updatedBook); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if err := c.ShouldBindJSON(&updatedBook); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	if updatedBook.Title == "" {
-		http.Error(w, "title is required", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "title is required"})
 		return
 	}
 	if updatedBook.AuthorID <= 0 {
-		http.Error(w, "author_id is required", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "author_id is required"})
 		return
 	}
 	if updatedBook.CategoryID <= 0 {
-		http.Error(w, "category_id is required", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "category_id is required"})
 		return
 	}
 	if updatedBook.Price <= 0 {
-		http.Error(w, "price must be greater than 0", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "price must be greater than 0"})
 		return
 	}
 
 	updatedBook.ID = id
 	books[id] = updatedBook
 
-	json.NewEncoder(w).Encode(updatedBook)
+	c.JSON(http.StatusOK, updatedBook)
 }
 
-func DeleteBook(w http.ResponseWriter, r *http.Request) {
-	params := mux.Vars(r)
-	id, err := strconv.Atoi(params["id"])
+func DeleteBook(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		http.Error(w, "invalid book ID", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid book ID"})
 		return
 	}
 
 	_, exists := books[id]
 	if !exists {
-		http.Error(w, "book not found", http.StatusNotFound)
+		c.JSON(http.StatusNotFound, gin.H{"error": "book not found"})
 		return
 	}
 
 	delete(books, id)
-	w.WriteHeader(http.StatusNoContent)
+	c.Status(http.StatusNoContent)
 }
