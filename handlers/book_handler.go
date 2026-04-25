@@ -1,86 +1,48 @@
 package handlers
 
 import (
+	"bookstore/config"
 	"bookstore/models"
+	"database/sql"
 	"encoding/json"
 	"net/http"
-	"sort"
 	"strconv"
 
 	"github.com/gorilla/mux"
 )
 
-var books = make(map[int]models.Book)
-var nextBookID = 1
-
 func GetBooks(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	var booksList []models.Book
-	for _, book := range books {
-		booksList = append(booksList, book)
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+
+	if page < 1 {
+		page = 1
 	}
-
-	sort.Slice(booksList, func(i, j int) bool {
-		return booksList[i].ID < booksList[j].ID
-	})
-
-	page := 1
-	limit := 10
-
-	pageStr := r.URL.Query().Get("page")
-	limitStr := r.URL.Query().Get("limit")
-
-	if pageStr != "" {
-		p, err := strconv.Atoi(pageStr)
-		if err != nil || p < 1 {
-			http.Error(w, "invalid page", http.StatusBadRequest)
-			return
-		}
-		page = p
+	if limit < 1 {
+		limit = 10
 	}
+	offset := (page - 1) * limit
 
-	if limitStr != "" {
-		l, err := strconv.Atoi(limitStr)
-		if err != nil || l < 1 {
-			http.Error(w, "invalid limit", http.StatusBadRequest)
-			return
-		}
-		limit = l
-	}
-
-	start := (page - 1) * limit
-	end := start + limit
-
-	if start >= len(booksList) {
-		json.NewEncoder(w).Encode([]models.Book{})
-		return
-	}
-
-	if end > len(booksList) {
-		end = len(booksList)
-	}
-
-	json.NewEncoder(w).Encode(booksList[start:end])
-}
-
-func GetBookByID(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	params := mux.Vars(r)
-	id, err := strconv.Atoi(params["id"])
+	rows, err := config.DB.Query("SELECT id, title, author_id, category_id, price FROM books LIMIT $1 OFFSET $2", limit, offset)
 	if err != nil {
-		http.Error(w, "invalid book ID", http.StatusBadRequest)
+		http.Error(w, "DB error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	defer rows.Close()
 
-	book, exists := books[id]
-	if !exists {
-		http.Error(w, "book not found", http.StatusNotFound)
-		return
+	var booksList []models.Book
+	for rows.Next() {
+		var b models.Book
+		rows.Scan(&b.ID, &b.Title, &b.AuthorID, &b.CategoryID, &b.Price)
+		booksList = append(booksList, b)
 	}
 
-	json.NewEncoder(w).Encode(book)
+	if booksList == nil {
+		booksList = []models.Book{}
+	}
+	json.NewEncoder(w).Encode(booksList)
 }
 
 func AddBook(w http.ResponseWriter, r *http.Request) {
@@ -92,90 +54,78 @@ func AddBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if book.Title == "" {
-		http.Error(w, "title is required", http.StatusBadRequest)
-		return
-	}
-	if book.AuthorID <= 0 {
-		http.Error(w, "author_id is required", http.StatusBadRequest)
-		return
-	}
-	if book.CategoryID <= 0 {
-		http.Error(w, "category_id is required", http.StatusBadRequest)
-		return
-	}
-	if book.Price <= 0 {
-		http.Error(w, "price must be greater than 0", http.StatusBadRequest)
-		return
-	}
+	err := config.DB.QueryRow(
+		"INSERT INTO books (title, author_id, category_id, price) VALUES ($1, $2, $3, $4) RETURNING id",
+		book.Title, book.AuthorID, book.CategoryID, book.Price,
+	).Scan(&book.ID)
 
-	book.ID = nextBookID
-	nextBookID++
-	books[book.ID] = book
+	if err != nil {
+		http.Error(w, "Could not save book: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(book)
 }
 
-func UpdateBook(w http.ResponseWriter, r *http.Request) {
+func GetBookByID(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-
 	params := mux.Vars(r)
-	id, err := strconv.Atoi(params["id"])
-	if err != nil {
-		http.Error(w, "invalid book ID", http.StatusBadRequest)
-		return
-	}
+	id, _ := strconv.Atoi(params["id"])
 
-	_, exists := books[id]
-	if !exists {
+	var b models.Book
+	err := config.DB.QueryRow("SELECT id, title, author_id, category_id, price FROM books WHERE id = $1", id).
+		Scan(&b.ID, &b.Title, &b.AuthorID, &b.CategoryID, &b.Price)
+
+	if err == sql.ErrNoRows {
 		http.Error(w, "book not found", http.StatusNotFound)
 		return
+	} else if err != nil {
+		http.Error(w, "DB error", http.StatusInternalServerError)
+		return
 	}
 
-	var updatedBook models.Book
-	if err := json.NewDecoder(r.Body).Decode(&updatedBook); err != nil {
+	json.NewEncoder(w).Encode(b)
+}
+
+func UpdateBook(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	params := mux.Vars(r)
+	id, _ := strconv.Atoi(params["id"])
+
+	var b models.Book
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	if updatedBook.Title == "" {
-		http.Error(w, "title is required", http.StatusBadRequest)
-		return
-	}
-	if updatedBook.AuthorID <= 0 {
-		http.Error(w, "author_id is required", http.StatusBadRequest)
-		return
-	}
-	if updatedBook.CategoryID <= 0 {
-		http.Error(w, "category_id is required", http.StatusBadRequest)
-		return
-	}
-	if updatedBook.Price <= 0 {
-		http.Error(w, "price must be greater than 0", http.StatusBadRequest)
-		return
-	}
-
-	updatedBook.ID = id
-	books[id] = updatedBook
-
-	json.NewEncoder(w).Encode(updatedBook)
-}
-
-func DeleteBook(w http.ResponseWriter, r *http.Request) {
-	params := mux.Vars(r)
-	id, err := strconv.Atoi(params["id"])
+	result, err := config.DB.Exec(
+		"UPDATE books SET title=$1, author_id=$2, category_id=$3, price=$4 WHERE id=$5",
+		b.Title, b.AuthorID, b.CategoryID, b.Price, id,
+	)
 	if err != nil {
-		http.Error(w, "invalid book ID", http.StatusBadRequest)
+		http.Error(w, "DB error", http.StatusInternalServerError)
 		return
 	}
 
-	_, exists := books[id]
-	if !exists {
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
 		http.Error(w, "book not found", http.StatusNotFound)
 		return
 	}
 
-	delete(books, id)
+	b.ID = id
+	json.NewEncoder(w).Encode(b)
+}
+
+func DeleteBook(w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
+	id, _ := strconv.Atoi(params["id"])
+
+	_, err := config.DB.Exec("DELETE FROM books WHERE id = $1", id)
+	if err != nil {
+		http.Error(w, "DB error", http.StatusInternalServerError)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }

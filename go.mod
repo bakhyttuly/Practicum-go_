@@ -1,5 +1,9 @@
 module bookstore
 
-go 1.23.0
+go 1.21
 
-require github.com/gorilla/mux v1.8.1
+require (
+    github.com/gorilla/mux v1.8.1
+    github.com/lib/pq v1.12.3
+    github.com/golang-jwt/jwt/v5 v5.3.1
+)
